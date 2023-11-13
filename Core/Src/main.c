@@ -47,11 +47,15 @@ uint16_t RED_LIGHT = GPIO_PIN_15;
 uint16_t BUTTON = GPIO_PIN_15;
 
 uint32_t startTime = 0;
-uint32_t second = 1000;
+const uint32_t second = 1000;
+
+const uint32_t greenLightDuration = 10 * second;
+const uint32_t yellowLightDuration = 5 * second;
+const uint32_t redLightDuration = 5 * second;
 
 uint16_t blink_mode = 0; // Номер комбинации
 uint32_t lamp[] = {0, 0, 0, 0}; // Элемент массива - фаза комбинации
-uint32_t leftTime[] = {greenLightDuration, 0, 0, 0}; // Элемент массива - оставшееся время фазы
+uint32_t leftTime[] = {greenLightDuration, redLightDuration, yellowLightDuration, greenLightDuration}; // Элемент массива - оставшееся время фазы
 
 /* USER CODE END PV */
 
@@ -66,7 +70,7 @@ static void MX_GPIO_Init(void);
 /* USER CODE BEGIN 0 */
 void wait(uint32_t duration) {
 	uint32_t begin = HAL_GetTick();
-	while ((HAL_GetTick() - beghin) < duration) {
+	while ((HAL_GetTick() - begin) < duration) {
 
 	}
 }
@@ -81,32 +85,35 @@ void turnLightOn(uint16_t light_type) {
 
 // Нужно передавать текущую фазу
 //start_blink_mode -- фаза
-void completePhase(uint16_t light, uint16_t start_blink_mode, uint32_t nextLightDuration) {
-	uint16_t blink_mode = start_blink_mode;
+void completePhase(uint16_t light, uint16_t* start_blink_mode, uint32_t nextLightDuration) {
+	uint16_t blink_mode = *start_blink_mode;
 	turnLightOn(light);
 	startTime = HAL_GetTick();
-	while((leftTime[blink_mode] = HAL_GetTick() - startTime) > 0) {
+	uint32_t duration;
+	while((duration = HAL_GetTick() - startTime) < leftTime[blink_mode]) {
 		if (HAL_GPIO_ReadPin(GPIOC, BUTTON) == 0) {
+			leftTime[blink_mode] -= duration;
 		  	blink_mode++; // Если кнопка нажата то меняем комбинацию
 		  	break;
 		}
 	}
 
 	turnLightOff(light);
-	if (blink_mode != start_blink_mode) {
+	if (blink_mode != *start_blink_mode) {
 		if (blink_mode == 1) {
-			goto combination1;
+			*start_blink_mode = 1;
 		} else if (blink_mode == 2) {
-			goto combination2;
+			*start_blink_mode = 2;
 		} else if (blink_mode == 3) {
-			goto combination3;
+			*start_blink_mode = 3;
 		} else if (blink_mode == 4) {
-			goto combination0;
+			*start_blink_mode = 0;
 		}
+		return;
 	}
 
-	leftTime[0] = nextLightDuration;
-	lamp[0]++; // переключаемся на следущую лампу в фазе
+	leftTime[blink_mode] = nextLightDuration;
+	lamp[blink_mode]++; // переключаемся на следущую лампу в фазе
 }
 
 /* USER CODE END 0 */
@@ -141,55 +148,50 @@ int main(void)
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
 
-
-  uint32_t greenLightDuration = 1;
-  uint32_t yellowLightDuration = 1;
-  uint32_t redLightDuration = 1;
-
   /* USER CODE END 2 */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-	  combination0: if (blink_mode == 0) {
-		  if (lamp[0] == 0 || lamp[0] > 2) {
+	  if (blink_mode == 0) {
+		  if ((lamp[0] == 0 || lamp[0] > 2) && blink_mode == 0) {
 			  lamp[0] = 0;
-			  completePhase(GREEN_LIGHT, 0, yellowLightDuration);
+			  completePhase(GREEN_LIGHT, &blink_mode, yellowLightDuration);
 		  }
-		  if (lamp[0] == 1) {
-			  completePhase(YELLOW_LIGHT, 0, redLightDuration);
+		  if (lamp[0] == 1 && blink_mode == 0) {
+			  completePhase(YELLOW_LIGHT, &blink_mode, redLightDuration);
 		  }
-		  if (lamp[0] == 2) {
-			  completePhase(RED_LIGHT, 0, greenLightDuration);
+		  if (lamp[0] == 2 && blink_mode == 0) {
+			  completePhase(RED_LIGHT, &blink_mode, greenLightDuration);
 		  }
 	  }
 
-	  combination1: if (blink_mode == 1) {
-		  if (lamp[1] == 0 || lamp[1] > 1) {
+	  if (blink_mode == 1) {
+		  if ((lamp[1] == 0 || lamp[1] > 1) && blink_mode == 1) {
 			  lamp[1] = 0;
-			  completePhase(RED_LIGHT, 1, yellowLightDuration);
+			  completePhase(RED_LIGHT, &blink_mode, yellowLightDuration);
 		  }
-		  if (lamp[1] == 1) {
-			  completePhase(YELLOW_LIGHT, 1, redLightDuration);
+		  if (lamp[1] == 1 && blink_mode == 1) {
+			  completePhase(YELLOW_LIGHT, &blink_mode, redLightDuration);
 		  }
 	  }
 
-	  combination2: if (blink_mode == 2) {
-		  if (lamp[2] == 0 || lamp[2] > 1) {
+	  if (blink_mode == 2) {
+		  if ((lamp[2] == 0 || lamp[2] > 1) && blink_mode == 2) {
 			  lamp[2] = 0;
-			  completePhase(YELLOW_LIGHT, 2, redLightDuration);
+			  completePhase(YELLOW_LIGHT, &blink_mode, redLightDuration);
 		  }
-		  if (lamp[2] == 1) {
-			  completePhase(RED_LIGHT, 2, yellowLightDuration);
+		  if (lamp[2] == 1 && blink_mode == 2) {
+			  completePhase(RED_LIGHT, &blink_mode, yellowLightDuration);
 		  }
 	  }
 
-	  combination3: if (blink_mode == 3) {
-		  if (lamp[3] == 0 || lamp[3] > 1) {
+	  if (blink_mode == 3) {
+		  if ((lamp[3] == 0 || lamp[3] > 1) && blink_mode == 3) {
 			  lamp[3] = 0;
-			  completePhase(GREEN_LIGHT, 3, redLightDuration);
+			  completePhase(GREEN_LIGHT, &blink_mode, redLightDuration);
 		  		  }
-		  if (lamp[3] == 1) {
-			  completePhase(RED_LIGHT, 3, greenLightDuration);
+		  if (lamp[3] == 1 && blink_mode == 3) {
+			  completePhase(RED_LIGHT, &blink_mode, greenLightDuration);
 		  }
 	  }
 
