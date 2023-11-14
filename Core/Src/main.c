@@ -49,9 +49,9 @@ uint16_t BUTTON = GPIO_PIN_15;
 uint32_t startTime = 0;
 const uint32_t second = 1000;
 
-const uint32_t greenLightDuration = 10 * second;
-const uint32_t yellowLightDuration = 5 * second;
-const uint32_t redLightDuration = 5 * second;
+const uint32_t greenLightDuration = 2 * second;
+const uint32_t yellowLightDuration = 2 * second;
+const uint32_t redLightDuration = 2 * second;
 
 uint16_t blink_mode = 0; // Номер комбинации
 uint32_t lamp[] = {0, 0, 0, 0}; // Элемент массива - фаза комбинации
@@ -94,6 +94,7 @@ void completePhase(uint16_t light, uint16_t* start_blink_mode, uint32_t nextLigh
 		if (HAL_GPIO_ReadPin(GPIOC, BUTTON) == 0) {
 			leftTime[blink_mode] -= duration;
 		  	blink_mode++; // Если кнопка нажата то меняем комбинацию
+		  	wait(second * 0.5);
 		  	break;
 		}
 	}
