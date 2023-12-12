@@ -18,15 +18,17 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usart.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdlib.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -47,27 +49,85 @@ uint16_t RED_LIGHT = GPIO_PIN_15;
 uint16_t BUTTON = GPIO_PIN_15;
 
 uint32_t startTime = 0;
+const int numCombinaions = 3;
 const uint32_t second = 1000;
-
-const uint32_t greenLightDuration = 2 * second;
-const uint32_t yellowLightDuration = 2 * second;
-const uint32_t redLightDuration = 2 * second;
-
 uint16_t blink_mode = 0; // Номер комбинации
-uint32_t lamp[] = {0, 0, 0, 0}; // Элемент массива - фаза комбинации
-uint32_t leftTime[] = {greenLightDuration, redLightDuration, yellowLightDuration, greenLightDuration}; // Элемент массива - оставшееся время фазы
+typedef struct {
+    int length;
+    int currentPhase;
+    uint32_t* lamp; //Последовательность ламп в комбинации
+    uint32_t* defaultTime; //Дефолтная продолжительность ламп
+    uint32_t* leftTime; //Оставшаяся продолжительность ламп
+} Combination;
+
+typedef struct {
+	uint8_t length;
+	char* values;
+	char* symbol;
+} Buffer;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+Buffer BufferConstructor(int length) {
+	Buffer buffer;
+	buffer.length = length;
+	buffer.values = (char*)malloc(length * sizeof(char));
+	buffer.symbol = buffer.values;
+
+	return buffer;
+}
+
+
+Combination CombinationConstructor(int length, uint32_t* lamp, uint32_t* defaultTime) {
+    Combination comb;
+    comb.length = length;
+    comb.currentPhase = 0;
+    comb.lamp = (uint32_t*)malloc(length * sizeof(uint32_t));
+    comb.defaultTime = (uint32_t*)malloc(length * sizeof(uint32_t));
+    comb.leftTime = (uint32_t*)malloc(length * sizeof(uint32_t));
+
+    // Copy values to allocated memory
+    for (int i = 0; i < length; i++) {
+        comb.lamp[i] = lamp[i];
+        comb.defaultTime[i] = defaultTime[i];
+        comb.leftTime[i] = defaultTime[i];
+    }
+
+    return comb;
+}
+
+Combination* CombListGenerator(int numCombinations) {
+    Combination* combinationList = (Combination*)malloc(numCombinations * sizeof(Combination));
+
+    // Combination 0
+    uint32_t lamps0[] = {GREEN_LIGHT, YELLOW_LIGHT, RED_LIGHT};
+    uint32_t defaultTime0[] = {2*second, 2*second, 2*second};
+    combinationList[0] = CombinationConstructor(3, lamps0, defaultTime0);
+
+    // Combination 1
+    uint32_t lamps1[] = {RED_LIGHT, YELLOW_LIGHT};
+    uint32_t defaultTime1[] = {1*second, 1*second};
+    combinationList[1] = CombinationConstructor(2, lamps1, defaultTime1);
+
+    // Combination 2
+    uint32_t lamps2[] = {GREEN_LIGHT, RED_LIGHT};
+    uint32_t defaultTime2[] = {1*second, 1*second};
+    combinationList[2] = CombinationConstructor(2, lamps2, defaultTime2);
+
+    // Add more combinations as needed
+
+    return combinationList;
+}
+
 void wait(uint32_t duration) {
 	uint32_t begin = HAL_GetTick();
 	while ((HAL_GetTick() - begin) < duration) {
@@ -83,39 +143,98 @@ void turnLightOn(uint16_t light_type) {
 	HAL_GPIO_WritePin(GPIOD, light_type, GPIO_PIN_SET);
 }
 
-// Нужно передавать текущую фазу
-//start_blink_mode -- фаза
-void completePhase(uint16_t light, uint16_t* start_blink_mode, uint32_t nextLightDuration) {
-	uint16_t blink_mode = *start_blink_mode;
-	turnLightOn(light);
+
+//Выполняет фазу. Если пользователь нажимает кнопку -- меняет комбинацию
+uint16_t completePhase(Combination* comb, uint16_t blink_mode) {
+	uint16_t result_blink_mode = blink_mode;
+
+
+	int currentPhase = comb->currentPhase;
+	turnLightOn(comb->lamp[currentPhase]);
 	startTime = HAL_GetTick();
 	uint32_t duration;
-	while((duration = HAL_GetTick() - startTime) < leftTime[blink_mode]) {
+	int pressedButton = 0;
+
+	while((duration = HAL_GetTick() - startTime) < comb->leftTime[currentPhase]) {
 		if (HAL_GPIO_ReadPin(GPIOC, BUTTON) == 0) {
-			leftTime[blink_mode] -= duration;
-		  	blink_mode++; // Если кнопка нажата то меняем комбинацию
-		  	wait(second * 0.5);
-		  	break;
+			comb->leftTime[currentPhase] -= duration;
+			result_blink_mode++; // Если кнопка нажата то меняем комбинацию
+			wait(second * 0.5);
+			pressedButton = 1;
+			break;
 		}
 	}
 
-	turnLightOff(light);
-	if (blink_mode != *start_blink_mode) {
-		if (blink_mode == 1) {
-			*start_blink_mode = 1;
-		} else if (blink_mode == 2) {
-			*start_blink_mode = 2;
-		} else if (blink_mode == 3) {
-			*start_blink_mode = 3;
-		} else if (blink_mode == 4) {
-			*start_blink_mode = 0;
+
+	if (pressedButton == 0) {
+		comb->leftTime[currentPhase] = comb->defaultTime[currentPhase];
+		comb->currentPhase += 1;
+		if (comb->currentPhase == comb->length) {
+			comb->currentPhase = 0;
 		}
-		return;
 	}
 
-	leftTime[blink_mode] = nextLightDuration;
-	lamp[blink_mode]++; // переключаемся на следущую лампу в фазе
+	turnLightOff(comb->lamp[currentPhase]);
+	return result_blink_mode;
 }
+
+void proceedCommand(char* command) {
+
+	char* mes;
+	if (strtok(command, " ") == "new") {
+		char* light = strtok(NULL, " ");
+		if (2 <= sizeof(light) && sizeof(light) >= 8) {
+			mes = "Количество ламп в комбинации должно быть от 2 до 8\n";
+			HAL_UART_Transmit(&huart6, (uint8_t *) mes, sizeof(mes), 3000);
+			return;
+		}
+
+		uint32_t lamp[sizeof(light)];
+
+		int i = 0;
+		while (light[i] != NULL) {
+			if (light[i] == 'g') {
+				lamp[i] = GREEN_LIGHT;
+			} else if (light[i] == 'y') {
+				lamp[i] = YELLOW_LIGHT;
+			} else if (light[i] == 'r') {
+				lamp[i] = RED_LIGHT;
+			} else if (light[i] == 'n') {
+				lamp[i] = 0;
+			} else {
+				mes = "Доступны только следующие символы g, r, y, n \n";
+				HAL_UART_Transmit(&huart6, (uint8_t *) mes, sizeof(mes), 3000);
+				return;
+			}
+			i++;
+		}
+
+		mes = 'Введите пожалуйста продолжительности для комбинаций';
+		HAL_UART_Transmit(&huart6, (uint8_t *) mes, sizeof(mes), 3000);
+
+		char* timeForComb;
+		uint32_t defaultTime[sizeof(lamp)]; //Дефолтная продолжительность ламп
+		for (int i = 0; i < sizeof(defaultTime); i++) {
+			sprintf(mes, "Продолжительность для комбинации №", intValue);
+			HAL_UART_Transmit(&huart6, (uint8_t *) mes, sizeof(mes), 3000);
+			if (HAL_UART_Receive(&huart6, (uint8_t *) timeForComb, 1, 10) == HAL_OK) {
+				int number = atoi(timeForComb);
+				if (number == 0) {
+					mes = "Вы должны ввести число больше 0";
+					HAL_UART_Transmit(&huart6, (uint8_t *) mes, sizeof(mes), 3000);
+					return;
+				}
+
+
+			} else {
+				return;
+			}
+		}
+	}
+
+	return;
+}
+
 
 /* USER CODE END 0 */
 
@@ -147,58 +266,63 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  //Combination* combList -- список комбинаций
+  //Combination* combList = CombListGenerator(3);
+  //uint16_t* start_blink_mode -- текущая комбинация
+
   /* USER CODE END 2 */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  Buffer input_buffer = BufferConstructor(10);
+  char overFlowMessage[] = "\nВы видите данное сообщение если произошло переполнение буфера\n";
+
+
   while (1) {
-	  if (blink_mode == 0) {
-		  if ((lamp[0] == 0 || lamp[0] > 2) && blink_mode == 0) {
-			  lamp[0] = 0;
-			  completePhase(GREEN_LIGHT, &blink_mode, yellowLightDuration);
+	  if (HAL_UART_Receive(&huart6, (uint8_t *) input_buffer.symbol, 1, 10) == HAL_OK) {
+		  //Дальнейший код нужно будет каким-то образом переписать
+		  HAL_UART_Transmit(&huart6, (uint8_t *) input_buffer.symbol, 1, 100);
+		  char letter = *input_buffer.symbol;
+
+		  if (*input_buffer.symbol == '\r') {
+			  char command[input_buffer.symbol - input_buffer.values];
+			  int i = 0;
+
+			  while (1) {
+				  char command_sym = input_buffer.values[i];
+				  if (command_sym == '\r') {
+					  command[i] = '\0';
+					  break;
+				  }
+				  command[i] = command_sym;
+				  i++;
+			  }
+
+			  proceedCommand(command);
 		  }
-		  if (lamp[0] == 1 && blink_mode == 0) {
-			  completePhase(YELLOW_LIGHT, &blink_mode, redLightDuration);
+
+		  input_buffer.symbol++;
+		  if (input_buffer.symbol >= input_buffer.values + input_buffer.length) {
+			  HAL_UART_Transmit(&huart6, (uint8_t *) overFlowMessage, sizeof(overFlowMessage), 1000);
+			  input_buffer.symbol = input_buffer.values;
 		  }
-		  if (lamp[0] == 2 && blink_mode == 0) {
-			  completePhase(RED_LIGHT, &blink_mode, greenLightDuration);
-		  }
+
+
 	  }
 
-	  if (blink_mode == 1) {
-		  if ((lamp[1] == 0 || lamp[1] > 1) && blink_mode == 1) {
-			  lamp[1] = 0;
-			  completePhase(RED_LIGHT, &blink_mode, yellowLightDuration);
-		  }
-		  if (lamp[1] == 1 && blink_mode == 1) {
-			  completePhase(YELLOW_LIGHT, &blink_mode, redLightDuration);
-		  }
-	  }
+	  /*
+	  if (blink_mode == 3) blink_mode = 0;
+	  Combination* comb = &combList[blink_mode];
+	  blink_mode = completePhase(comb, blink_mode);
+	  */
 
-	  if (blink_mode == 2) {
-		  if ((lamp[2] == 0 || lamp[2] > 1) && blink_mode == 2) {
-			  lamp[2] = 0;
-			  completePhase(YELLOW_LIGHT, &blink_mode, redLightDuration);
-		  }
-		  if (lamp[2] == 1 && blink_mode == 2) {
-			  completePhase(RED_LIGHT, &blink_mode, yellowLightDuration);
-		  }
-	  }
 
-	  if (blink_mode == 3) {
-		  if ((lamp[3] == 0 || lamp[3] > 1) && blink_mode == 3) {
-			  lamp[3] = 0;
-			  completePhase(GREEN_LIGHT, &blink_mode, redLightDuration);
-		  		  }
-		  if (lamp[3] == 1 && blink_mode == 3) {
-			  completePhase(RED_LIGHT, &blink_mode, greenLightDuration);
-		  }
-	  }
 
     /* USER CODE END WHILE */
-
-
 
     /* USER CODE BEGIN 3 */
   }
@@ -244,39 +368,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PC15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PD13 PD14 PD15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
 }
 
 /* USER CODE BEGIN 4 */
